@@ -328,14 +328,31 @@ const BATCH=5;
 const EXCL=new Set([
   // 穩定幣
   'USDC','USDD','USDP','TUSD','BUSD','DAI','FRAX','LUSD','GUSD','FDUSD','PYUSD','EURC','EURS','EURT',
-  // 美股代幣
-  'AAPL','TSLA','AMZN','GOOGL','MSFT','NVDA','META','NFLX','BABA','UBER','COIN','PYPL',
-  'AMD','INTC','BIDU','JNJ','JPM','BAC','WMT','DIS','V','ABNB','PLTR','HOOD','MSTR',
-  // 石油代幣
-  'OIL','CRUDE','WTI','BRENT','NGAS',
+  // 美股代幣（含1000前綴版本）
+  'AAPL','1000AAPL','TSLA','1000TSLA','AMZN','GOOGL','MSFT','NVDA','META','NFLX',
+  'BABA','UBER','COIN','PYPL','AMD','INTC','BIDU','JNJ','JPM','BAC','WMT','DIS',
+  'V','ABNB','PLTR','HOOD','MSTR','MARA','RIOT','CLSK','CORZ','CIFR','HUT','BTDR',
+  // 石油、天然氣
+  'OIL','CRUDE','WTI','BRENT','NGAS','NATGAS',
   // 貴金屬
   'XAU','XAG','XPT','XPD','GOLD','SILVER','PAXG','XAUT','CACHE',
+  // 銅等金屬
+  'COPPER','1000COPPER','COPPERFUTURES',
 ]);
+
+// 前綴排除（symbol 開頭符合就排除）
+const EXCL_PREFIX=['1000AAPL','1000TSLA','1000COPPER'];
+
+function isExcluded(base){
+  if(EXCL.has(base))return true;
+  // 含美股關鍵字的合成代幣
+  if(/^(AAPL|TSLA|AMZN|GOOGL|MSFT|NVDA|META|NFLX|BABA|COIN|PLTR|MSTR|MARA|RIOT)/.test(base))return true;
+  // 貴金屬關鍵字
+  if(/^(XAU|XAG|GOLD|SILVER|COPPER)/.test(base))return true;
+  // 石油關鍵字
+  if(/^(OIL|CRUDE|WTI|BRENT|NGAS)/.test(base))return true;
+  return false;
+}
 
 let allData=[], curTab='all', sortKey='score', sortDir=-1;
 let gradeF='all', emaF='all', macdF='all', searchQ='';
@@ -363,7 +380,7 @@ async function startScan(){
     let list=tickers.filter(t=>{
       if(!t.symbol.endsWith('USDT'))return false;
       const base=t.symbol.replace('USDT','');
-      if(EXCL.has(base))return false;
+      if(isExcluded(base))return false;
       return true;
     }).sort((a,b)=>parseFloat(b.quoteVolume)-parseFloat(a.quoteVolume));
     if(topN<9999)list=list.slice(0,topN);
@@ -440,16 +457,34 @@ async function analyzeOne(ticker,fmap,tf){
   else if(lH<0)macdSig=-1;         // 零軸下方
 
   // EMA
-  const e99a=calcEMA(cl,99); const e200a=calcEMA(cl,200);
-  const ema99=e99a[e99a.length-1]; const ema200=e200a[e200a.length-1];
-  const ema99dir=ema99>e99a[e99a.length-2]?'up':'down';
-  const ema200dir=ema200>e200a[e200a.length-2]?'up':'down';
-  const aboveEma99=price>ema99; const aboveEma200=price>ema200;
-  const distEma99=((price-ema99)/ema99*100).toFixed(2);
-  const distEma200=((price-ema200)/ema200*100).toFixed(2);
-  let emaStatus=aboveEma99&&aboveEma200?'above_both':!aboveEma99&&!aboveEma200?'below_both':'between';
-  let emaScore=emaStatus==='above_both'?(ema99dir==='up'&&ema200dir==='up'?25:20):
-    emaStatus==='below_both'?(ema99dir==='down'&&ema200dir==='down'?-25:-20):(aboveEma200?5:-5);
+  // EMA — 需要足夠K線才準確
+  const hasEma99 = cl.length >= 150;   // EMA99需至少150根
+  const hasEma200 = cl.length >= 300;  // EMA200需至少300根才夠熱身
+  const e99a=calcEMA(cl,99);
+  const e200a=calcEMA(cl,200);
+  const ema99=hasEma99?e99a[e99a.length-1]:null;
+  const ema200=hasEma200?e200a[e200a.length-1]:null;
+  const ema99dir=hasEma99&&ema99>e99a[e99a.length-2]?'up':'down';
+  const ema200dir=hasEma200&&ema200>e200a[e200a.length-2]?'up':'down';
+  const aboveEma99=hasEma99?price>ema99:null;
+  const aboveEma200=hasEma200?price>ema200:null;
+  const distEma99=hasEma99?((price-ema99)/ema99*100).toFixed(2):null;
+  const distEma200=hasEma200?((price-ema200)/ema200*100).toFixed(2):null;
+  const distEma99Abs=hasEma99?Math.abs(parseFloat(distEma99)):999;
+  const distEma200Abs=hasEma200?Math.abs(parseFloat(distEma200)):999;
+
+  let emaStatus='unknown';
+  if(hasEma99&&hasEma200){
+    emaStatus=aboveEma99&&aboveEma200?'above_both':!aboveEma99&&!aboveEma200?'below_both':'between';
+  }else if(hasEma99){
+    emaStatus=aboveEma99?'above99only':'below99only';
+  }
+  let emaScore=0;
+  if(emaStatus==='above_both')emaScore=ema99dir==='up'&&ema200dir==='up'?25:20;
+  else if(emaStatus==='below_both')emaScore=ema99dir==='down'&&ema200dir==='down'?-25:-20;
+  else if(emaStatus==='between')emaScore=aboveEma200?5:-5;
+  else if(emaStatus==='above99only')emaScore=8;
+  else if(emaStatus==='below99only')emaScore=-8;
 
   // Breakout
   const LB=20;
@@ -546,7 +581,8 @@ async function analyzeOne(ticker,fmap,tf){
     distEma99Abs:Math.abs(parseFloat(distEma99)),
     distEma200Abs:Math.abs(parseFloat(distEma200)),
     longEntry,longStop,longTP,shortEntry,shortStop,shortTP,
-    supportLvl,resistanceLvl
+    supportLvl,resistanceLvl,
+    hasEma99,hasEma200,distEma99Abs,distEma200Abs
   };
 }
 
@@ -636,10 +672,14 @@ function render(){
 
     const p99cls=d.aboveEma99?'epa':'epb';
     const p200cls=d.aboveEma200?'epa':'epb';
-    const d99sign=parseFloat(d.distEma99)>=0?'+':'';
-    const d200sign=parseFloat(d.distEma200)>=0?'+':'';
-    const d99cls=parseFloat(d.distEma99)>=0?'ed-pos':'ed-neg';
-    const d200cls=parseFloat(d.distEma200)>=0?'ed-pos':'ed-neg';
+    const d99sign=d.distEma99&&parseFloat(d.distEma99)>=0?'+':'';
+    const d200sign=d.distEma200&&parseFloat(d.distEma200)>=0?'+':'';
+    const d99cls=d.distEma99&&parseFloat(d.distEma99)>=0?'ed-pos':'ed-neg';
+    const d200cls=d.distEma200&&parseFloat(d.distEma200)>=0?'ed-pos':'ed-neg';
+    const p99str=d.hasEma99?(d.aboveEma99?'↑':'↓')+'EMA99':'EMA99?';
+    const p200str=d.hasEma200?(d.aboveEma200?'↑':'↓')+'EMA200':'EMA200數據不足';
+    const dist99str=d.hasEma99?`EMA99 ${d99sign}${d.distEma99}%`:'EMA99 計算中';
+    const dist200str=d.hasEma200?`EMA200 ${d200sign}${d.distEma200}%`:'EMA200 數據不足';
 
     const gfCls=d.signal==='short'?'gfs':d.signal==='watch'?'gfw':'gfl';
 
@@ -698,10 +738,10 @@ function render(){
     <span class="sig ${sigCls}">${sigStr}</span>
   </div>
   <div class="crow2">
-    <span class="epill ${p99cls}">${d.aboveEma99?'↑':'↓'}EMA99</span>
-    <span class="epill ${p200cls}">${d.aboveEma200?'↑':'↓'}EMA200</span>
-    <span class="edist ${d99cls}">EMA99 ${d99sign}${d.distEma99}%</span>
-    <span class="edist ${d200cls}">EMA200 ${d200sign}${d.distEma200}%</span>
+    <span class="epill ${d.hasEma99?p99cls:'chn'}">${p99str}</span>
+    <span class="epill ${d.hasEma200?p200cls:'chn'}">${p200str}</span>
+    <span class="edist ${d99cls}">${dist99str}</span>
+    <span class="edist ${d200cls}">${dist200str}</span>
   </div>
   <div class="crow3">
     <div class="gbar"><div class="gfill ${gfCls}" style="width:${Math.min(d.score,100)}%"></div></div>
