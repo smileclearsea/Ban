@@ -409,7 +409,7 @@ async function startScan(){
 // ═══════════════ BTC ═══════════════
 async function analyzeBTC(tf){
   try{
-    const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=500`);
+    const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=1500`);
     const cl=kl.map(k=>parseFloat(k[4]));
     const price=cl[cl.length-1];
     const e99=calcEMA(cl,99); const e200=calcEMA(cl,200);
@@ -439,7 +439,7 @@ async function analyzeOne(ticker,fmap,tf){
   const price=parseFloat(ticker.lastPrice);
   const chg=parseFloat(ticker.priceChangePercent);
 
-  const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=500`);
+  const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=1500`);
   const cl=kl.map(k=>parseFloat(k[4]));
   const hi=kl.map(k=>parseFloat(k[2]));
   const lo=kl.map(k=>parseFloat(k[3]));
@@ -458,8 +458,8 @@ async function analyzeOne(ticker,fmap,tf){
 
   // EMA
   // EMA — 需要足夠K線才準確
-  const hasEma99 = cl.length >= 150;   // EMA99需至少150根
-  const hasEma200 = cl.length >= 300;  // EMA200需至少300根才夠熱身
+  const hasEma99 = cl.length >= 150;
+  const hasEma200 = cl.length >= 250;
   const e99a=calcEMA(cl,99);
   const e200a=calcEMA(cl,200);
   const ema99=hasEma99?e99a[e99a.length-1]:null;
@@ -587,7 +587,15 @@ async function analyzeOne(ticker,fmap,tf){
 }
 
 // ═══════════════ INDICATORS ═══════════════
-function calcEMA(cl,p){const k=2/(p+1);let e=cl[0];const o=[e];for(let i=1;i<cl.length;i++){e=cl[i]*k+e*(1-k);o.push(e);}return o;}
+function calcEMA(cl,p){
+  // 用前p根的SMA當初始值，比用第一根K線更準確
+  if(cl.length<p)return cl.map(()=>cl[cl.length-1]);
+  const k=2/(p+1);
+  let e=cl.slice(0,p).reduce((a,b)=>a+b,0)/p; // SMA seed
+  const o=new Array(p).fill(e);
+  for(let i=p;i<cl.length;i++){e=cl[i]*k+e*(1-k);o.push(e);}
+  return o;
+}
 function calcRSI(cl,p=14){
   if(cl.length<p+1)return 50;
   let g=0,l=0;
