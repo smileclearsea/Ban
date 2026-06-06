@@ -322,7 +322,7 @@ select{background:var(--bg2);border:1px solid var(--bdr2);color:var(--text);
 
 <script>
 const API='https://fapi.binance.com';
-const BATCH=5;
+const BATCH=4; // 每批4個，避免同時太多請求
 
 // 排除清單：穩定幣、美股代幣、石油、貴金屬
 const EXCL=new Set([
@@ -410,8 +410,7 @@ async function startScan(){
 async function analyzeBTC(tf){
   try{
     const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=1500`);
-    const cl=kl.map(k=>parseFloat(k[4]));
-    const price=cl[cl.length-1];
+    const cl=kl.map(k=>parseFloat(k[4]));    const price=cl[cl.length-1];
     const e99=calcEMA(cl,99); const e200=calcEMA(cl,200);
     const a99=price>e99[e99.length-1]; const a200=price>e200[e200.length-1];
     btcTrend=a99&&a200?'bull':!a99&&!a200?'bear':'neutral';
@@ -439,11 +438,16 @@ async function analyzeOne(ticker,fmap,tf){
   const price=parseFloat(ticker.lastPrice);
   const chg=parseFloat(ticker.priceChangePercent);
 
-  const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=1500`);
+  // 指標用60根（夠用且快）
+  const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=60`);
   const cl=kl.map(k=>parseFloat(k[4]));
   const hi=kl.map(k=>parseFloat(k[2]));
   const lo=kl.map(k=>parseFloat(k[3]));
   const vo=kl.map(k=>parseFloat(k[5]));
+
+  // EMA 另外抓1500根收盤價（只取第5欄，傳輸快很多）
+  const klEma=await fetchJ(`${API}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=1500`);
+  const clEma=klEma.map(k=>parseFloat(k[4]));
 
   const rsi=calcRSI(cl,14);
 
@@ -458,10 +462,10 @@ async function analyzeOne(ticker,fmap,tf){
 
   // EMA
   // EMA — 需要足夠K線才準確
-  const hasEma99 = cl.length >= 150;
-  const hasEma200 = cl.length >= 250;
-  const e99a=calcEMA(cl,99);
-  const e200a=calcEMA(cl,200);
+  const hasEma99 = clEma.length >= 150;
+  const hasEma200 = clEma.length >= 250;
+  const e99a=calcEMA(clEma,99);
+  const e200a=calcEMA(clEma,200);
   const ema99=hasEma99?e99a[e99a.length-1]:null;
   const ema200=hasEma200?e200a[e200a.length-1]:null;
   const ema99dir=hasEma99&&ema99>e99a[e99a.length-2]?'up':'down';
