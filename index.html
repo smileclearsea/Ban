@@ -292,6 +292,15 @@ select{background:var(--bg2);border:1px solid var(--bdr2);color:var(--text);
   <button class="fbtn" onclick="setEmaF('between',this)">⇔ 夾在之間</button>
 </div>
 
+<!-- MACD TF -->
+<div class="filterbar">
+  <span class="fbarlbl">MACD時框：</span>
+  <button class="fbtn" data-tf="1w" onclick="setMacdTF('1w',this)">週線</button>
+  <button class="fbtn fn" data-tf="1d" onclick="setMacdTF('1d',this)">日線</button>
+  <button class="fbtn" data-tf="4h" onclick="setMacdTF('4h',this)">4H</button>
+  <button class="fbtn" data-tf="1h" onclick="setMacdTF('1h',this)">1H</button>
+  <button class="fbtn" data-tf="15m" onclick="setMacdTF('15m',this)">15m</button>
+</div>
 <!-- MACD FILTER -->
 <div class="filterbar">
   <span class="fbarlbl">MACD：</span>
@@ -300,6 +309,27 @@ select{background:var(--bg2);border:1px solid var(--bdr2);color:var(--text);
   <button class="fbtn" onclick="setMacdF('dead',this)">▼ 死叉</button>
   <button class="fbtn" onclick="setMacdF('above',this)">柱在零軸上</button>
   <button class="fbtn" onclick="setMacdF('below',this)">柱在零軸下</button>
+</div>
+
+<!-- KDJ TF -->
+<div class="filterbar">
+  <span class="fbarlbl">KDJ時框：</span>
+  <button class="fbtn" data-ktf="1w" onclick="setKdjTF('1w',this)">週線</button>
+  <button class="fbtn fn" data-ktf="1d" onclick="setKdjTF('1d',this)">日線</button>
+  <button class="fbtn" data-ktf="4h" onclick="setKdjTF('4h',this)">4H</button>
+  <button class="fbtn" data-ktf="1h" onclick="setKdjTF('1h',this)">1H</button>
+  <button class="fbtn" data-ktf="15m" onclick="setKdjTF('15m',this)">15m</button>
+</div>
+<!-- KDJ FILTER -->
+<div class="filterbar">
+  <span class="fbarlbl">KDJ：</span>
+  <button class="fbtn fn" onclick="setKdjF('all',this)">全部</button>
+  <button class="fbtn" onclick="setKdjF('golden',this)">▲ 金叉</button>
+  <button class="fbtn" onclick="setKdjF('dead',this)">▼ 死叉</button>
+  <button class="fbtn" onclick="setKdjF('lowgold',this)">低位金叉</button>
+  <button class="fbtn" onclick="setKdjF('highdead',this)">高位死叉</button>
+  <button class="fbtn" onclick="setKdjF('kgtd',this)">K&gt;D</button>
+  <button class="fbtn" onclick="setKdjF('kltd',this)">K&lt;D</button>
 </div>
 
 <!-- SEARCH -->
@@ -363,6 +393,8 @@ async function startScan(){
   const btn=document.getElementById('scanBtn');
   const tf=document.getElementById('tfSel').value;
   const topN=parseInt(document.getElementById('topN').value);
+  for(const k in macdCache)delete macdCache[k];
+  for(const k in kdjCache)delete kdjCache[k];
   btn.disabled=true; btn.textContent='掃描中…';
   setLive('SCANNING','var(--neu)'); hideErr(); showLoad(); setProg(0,'準備…');
 
@@ -409,7 +441,7 @@ async function startScan(){
 // ═══════════════ BTC ═══════════════
 async function analyzeBTC(tf){
   try{
-    const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=1500`);
+    const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=BTCUSDT&interval=${tf}&limit=1000`);
     const cl=kl.map(k=>parseFloat(k[4]));    const price=cl[cl.length-1];
     const e99=calcEMA(cl,99); const e200=calcEMA(cl,200);
     const a99=price>e99[e99.length-1]; const a200=price>e200[e200.length-1];
@@ -438,16 +470,14 @@ async function analyzeOne(ticker,fmap,tf){
   const price=parseFloat(ticker.lastPrice);
   const chg=parseFloat(ticker.priceChangePercent);
 
-  // 指標用60根（夠用且快）
-  const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=60`);
+  // 單次抓1000根，所有指標共用（暖機夠長，數值才會跟幣安一致）
+  const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=1000`);
   const cl=kl.map(k=>parseFloat(k[4]));
   const hi=kl.map(k=>parseFloat(k[2]));
   const lo=kl.map(k=>parseFloat(k[3]));
   const vo=kl.map(k=>parseFloat(k[5]));
 
-  // EMA 另外抓1500根收盤價（只取第5欄，傳輸快很多）
-  const klEma=await fetchJ(`${API}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=1500`);
-  const clEma=klEma.map(k=>parseFloat(k[4]));
+  const clEma=cl;
 
   const rsi=calcRSI(cl,14);
 
@@ -459,6 +489,8 @@ async function analyzeOne(ticker,fmap,tf){
   else if(lH<0&&pH>=0)macdSig=-2; // 死叉
   else if(lH>0)macdSig=1;          // 零軸上方
   else if(lH<0)macdSig=-1;         // 零軸下方
+  (macdCache[sym]=macdCache[sym]||{})[tf]=macdInfo(cl);
+  (kdjCache[sym]=kdjCache[sym]||{})[tf]=kdjInfo(hi,lo,cl);
 
   // EMA
   // EMA — 需要足夠K線才準確
@@ -608,12 +640,90 @@ function calcRSI(cl,p=14){
   for(let i=p+1;i<cl.length;i++){const d=cl[i]-cl[i-1];ag=(ag*(p-1)+Math.max(d,0))/p;al=(al*(p-1)+Math.max(-d,0))/p;}
   return al===0?100:100-100/(1+ag/al);
 }
+function emaSeries(a,p){const k=2/(p+1);let e=a[0];const o=[e];for(let i=1;i<a.length;i++){e=a[i]*k+e*(1-k);o.push(e);}return o;}
 function calcMACD(cl,fast=12,slow=26,sig=9){
-  const ef=calcEMA(cl,fast),es=calcEMA(cl,slow);
+  const ef=emaSeries(cl,fast),es=emaSeries(cl,slow);
   const ml=ef.map((v,i)=>v-es[i]);
-  const sl=calcEMA(ml.slice(slow-1),sig);
-  const hist=sl.map((v,i)=>ml[slow-1+i]-v);
+  const sl=emaSeries(ml,sig);
+  const hist=ml.map((v,i)=>v-sl[i]);   // 柱 = DIF - DEA（同幣安）
   return{hist,macdLine:ml,signalLine:sl};
+}
+function macdInfo(cl){
+  if(!cl||cl.length<40)return null;
+  const m=calcMACD(cl),n=m.hist.length;
+  const h=m.hist[n-1],p=m.hist[n-2];
+  const sig=h>0&&p<=0?2:h<0&&p>=0?-2:h>0?1:-1;
+  return{dif:m.macdLine[n-1],dea:m.signalLine[n-1],hist:h,sig};
+}
+function kdjInfo(hi,lo,cl){
+  if(!cl||cl.length<20)return null;
+  const {K,D,J}=calcKDJ(hi,lo,cl,9,3),n=K.length;
+  const k=K[n-1],d=D[n-1],pk=K[n-2],pd=D[n-2];
+  const sig=k>d&&pk<=pd?2:k<d&&pk>=pd?-2:k>d?1:-1;   // 2金叉 -2死叉 1 K>D -1 K<D
+  return{k,d,j:J[n-1],sig};
+}
+// ═══ 多時框 MACD / KDJ（週/日/4H/1H/15m）═══
+const MTF=[['1w','週線'],['1d','日線'],['4h','4H'],['1h','1H'],['15m','15m']];
+const macdCache={}, kdjCache={};
+let macdTF='1d', kdjTF='1d', kdjF='all', macdToken=0;
+async function loadMacdTF(sym,tf){
+  macdCache[sym]=macdCache[sym]||{};
+  if(macdCache[sym][tf]!==undefined)return;
+  try{
+    const kl=await fetchJ(`${API}/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=300`);
+    const hi=kl.map(k=>parseFloat(k[2])),lo=kl.map(k=>parseFloat(k[3])),cl=kl.map(k=>parseFloat(k[4]));
+    macdCache[sym][tf]=macdInfo(cl);
+    (kdjCache[sym]=kdjCache[sym]||{})[tf]=kdjInfo(hi,lo,cl);
+  }catch(e){macdCache[sym][tf]=null;(kdjCache[sym]=kdjCache[sym]||{})[tf]=null;}
+}
+async function ensureTF(list,tf,kind){
+  const my=++macdToken;
+  const B=6;
+  for(let i=0;i<list.length;i+=B){
+    await Promise.all(list.slice(i,i+B).map(d=>loadMacdTF(d.rawSym,tf)));
+    if(my!==macdToken)return;
+    const el=document.getElementById('cardlist');
+    el.innerHTML='<div class="loadstate">載入 '+tfName(tf)+' '+kind+' 中… '+Math.min(i+B,list.length)+'/'+list.length+'</div>';
+  }
+  if(my===macdToken)render();
+}
+function tfName(tf){const m=MTF.find(x=>x[0]===tf);return m?m[1]:tf;}
+function fmtS(v){return v===null||v===undefined?'—':Number(v).toPrecision(3);}
+function mtfHtml(sym){
+  const c=macdCache[sym]||{};
+  return MTF.map(([tf,lb])=>{
+    const m=c[tf];
+    if(m===undefined)return `<div class="dbox"><div class="dblbl">${lb} MACD</div><div class="dbval dvn">載入中…</div></div>`;
+    if(m===null)return `<div class="dbox"><div class="dblbl">${lb} MACD</div><div class="dbval dvn">數據不足</div></div>`;
+    const t=m.sig===2?'金叉▲':m.sig===-2?'死叉▼':m.sig===1?'多（柱>0）':'空（柱<0）';
+    return `<div class="dbox"><div class="dblbl">${lb} MACD</div><div class="dbval ${m.sig>0?'dvl':'dvs'}">${t}</div><div class="dbsub">DIF ${fmtS(m.dif)}<br>DEA ${fmtS(m.dea)}<br>柱 ${fmtS(m.hist)}</div></div>`;
+  }).join('');
+}
+function kdjHtml(sym){
+  const c=kdjCache[sym]||{};
+  return MTF.map(([tf,lb])=>{
+    const m=c[tf];
+    if(m===undefined)return `<div class="dbox"><div class="dblbl">${lb} KDJ</div><div class="dbval dvn">載入中…</div></div>`;
+    if(m===null)return `<div class="dbox"><div class="dblbl">${lb} KDJ</div><div class="dbval dvn">數據不足</div></div>`;
+    const t=m.sig===2?(m.k<50?'低位金叉▲':'金叉▲'):m.sig===-2?(m.k>50?'高位死叉▼':'死叉▼'):m.sig===1?'K>D 偏多':'K<D 偏空';
+    return `<div class="dbox"><div class="dblbl">${lb} KDJ</div><div class="dbval ${m.sig>0?'dvl':'dvs'}">${t}</div><div class="dbsub">K ${m.k.toFixed(1)}<br>D ${m.d.toFixed(1)}<br>J ${m.j.toFixed(1)}</div></div>`;
+  }).join('');
+}
+function kdjChips(sym){
+  const c=kdjCache[sym]||{};
+  return MTF.filter(([tf])=>c[tf]).map(([tf,lb])=>{
+    const m=c[tf];
+    const t=m.sig===2?'金叉':m.sig===-2?'死叉':m.sig>0?'K>D':'K<D';
+    return `<span class="chip ${m.sig>0?'chl':'chs'}">${lb}KDJ${t}</span>`;
+  }).join('');
+}
+function mtfChips(sym){
+  const c=macdCache[sym]||{};
+  return MTF.filter(([tf])=>c[tf]).map(([tf,lb])=>{
+    const m=c[tf];
+    const t=m.sig===2?'金叉':m.sig===-2?'死叉':m.sig>0?'多':'空';
+    return `<span class="chip ${m.sig>0?'chl':'chs'}">${lb}MACD${t}</span>`;
+  }).join('');
 }
 function calcBB(cl,n=20,mult=2){
   const s=cl.slice(-n);const mid=avg(s);
@@ -658,10 +768,24 @@ function render(){
   else if(emaF==='below200')data=data.filter(d=>!d.aboveEma200);
   else if(emaF==='between')data=data.filter(d=>d.emaStatus==='between');
   // MACD filter
-  if(macdF==='golden')data=data.filter(d=>d.macdSig===2);
-  else if(macdF==='dead')data=data.filter(d=>d.macdSig===-2);
-  else if(macdF==='above')data=data.filter(d=>d.macdSig>0);
-  else if(macdF==='below')data=data.filter(d=>d.macdSig<0);
+  if(macdF!=='all'){
+    const missing=data.filter(d=>!(macdCache[d.rawSym]&&macdCache[d.rawSym][macdTF]!==undefined));
+    if(missing.length){ensureTF(missing,macdTF,'MACD');return;}
+    data=data.filter(d=>{
+      const m=macdCache[d.rawSym][macdTF]; if(!m)return false;
+      return macdF==='golden'?m.sig===2:macdF==='dead'?m.sig===-2:macdF==='above'?m.sig>0:m.sig<0;
+    });
+  }
+  if(kdjF!=='all'){
+    const missing=data.filter(d=>!(macdCache[d.rawSym]&&macdCache[d.rawSym][kdjTF]!==undefined));
+    if(missing.length){ensureTF(missing,kdjTF,'KDJ');return;}
+    data=data.filter(d=>{
+      const m=(kdjCache[d.rawSym]||{})[kdjTF]; if(!m)return false;
+      return kdjF==='golden'?m.sig===2:kdjF==='dead'?m.sig===-2:
+        kdjF==='lowgold'?(m.sig===2&&m.k<50):kdjF==='highdead'?(m.sig===-2&&m.k>50):
+        kdjF==='kgtd'?m.sig>0:m.sig<0;
+    });
+  }
   if(searchQ){const q=searchQ.toUpperCase().replace(/USDT$/,'');data=data.filter(d=>d.symbol.includes(q));}
   data.sort((a,b)=>sortDir*(a[sortKey]-b[sortKey]));
 
@@ -741,7 +865,7 @@ function render(){
     const lPct=(((d.longEntry-d.longStop)/d.longEntry)*100).toFixed(2);
     const sPct=(((d.shortStop-d.shortEntry)/d.shortEntry)*100).toFixed(2);
 
-    return `<div class="card" onclick="toggleCard(this)">
+    return `<div class="card" onclick="toggleCard(this,'${d.rawSym}')">
   <div class="crow1">
     <div class="grade ${gradeCls}">${d.grade}</div>
     <span class="csym">${d.symbol}<sub>/USDT</sub></span>
@@ -769,9 +893,15 @@ function render(){
     <span class="chip ${kdjCls}">${kdjStr} ${kdjVal}</span>
     <span class="chip ${vpCls}">${vpStr}</span>
     ${btcChip}
+    ${mtfChips(d.rawSym)}
+    ${kdjChips(d.rawSym)}
   </div>
   ${showCorr?'<div class="corrwarn">⚠ 同方向信號過多，山寨幣高度相關，建議最多選 1-2 個</div>':''}
   <div class="cdetail">
+    <div class="dtitle">▸ 多時框 MACD（週／日／4H／1H／15m）</div>
+    <div class="dg3" id="mtf-${d.rawSym}">${mtfHtml(d.rawSym)}</div>
+    <div class="dtitle">▸ 多時框 KDJ（週／日／4H／1H／15m）</div>
+    <div class="dg3" id="kdj-${d.rawSym}">${kdjHtml(d.rawSym)}</div>
     <div class="dtitle">▸ EMA 趨勢</div>
     <div class="dg3">
       <div class="dbox"><div class="dblbl">現價</div><div class="dbval dvn">${fmtP(d.price)}</div></div>
@@ -810,7 +940,15 @@ function render(){
   }).join('');
 }
 
-function toggleCard(el){el.classList.toggle('open');}
+async function toggleCard(el,sym){
+  el.classList.toggle('open');
+  if(!el.classList.contains('open'))return;
+  const box=document.getElementById('mtf-'+sym);
+  await Promise.all(MTF.map(([tf])=>loadMacdTF(sym,tf)));
+  if(box)box.innerHTML=mtfHtml(sym);
+  const kb=document.getElementById('kdj-'+sym);
+  if(kb)kb.innerHTML=kdjHtml(sym);
+}
 
 // ═══════════════ UI ═══════════════
 function updateStats(){
@@ -856,6 +994,25 @@ function setEmaF(f,el){
   document.querySelectorAll('.filterbar .fbtn').forEach(b=>{if(b.onclick.toString().includes('setEmaF'))b.className='fbtn';});
   const cls=f==='above_both'||f==='above99'||f==='above200'?'fa':f==='below_both'||f==='below99'||f==='below200'?'fs':f==='between'?'fw':'fn';
   el.className='fbtn '+cls;render();
+}
+function setKdjTF(tf,el){
+  kdjTF=tf;
+  document.querySelectorAll('[data-ktf]').forEach(b=>b.className='fbtn');
+  el.className='fbtn fn';
+  if(allData.length)render();
+}
+function setKdjF(f,el){
+  kdjF=f;
+  document.querySelectorAll('.filterbar .fbtn').forEach(b=>{if(b.getAttribute('onclick')&&b.getAttribute('onclick').indexOf('setKdjF(')===0)b.className='fbtn';});
+  const cls=f==='golden'||f==='lowgold'||f==='kgtd'?'fa':f==='dead'||f==='highdead'||f==='kltd'?'fs':'fn';
+  el.className='fbtn '+cls;
+  if(allData.length)render();
+}
+function setMacdTF(tf,el){
+  macdTF=tf;
+  document.querySelectorAll('[data-tf]').forEach(b=>b.className='fbtn');
+  el.className='fbtn fn';
+  if(allData.length)render();
 }
 function setMacdF(f,el){
   macdF=f;
